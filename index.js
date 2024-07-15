@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
@@ -80,13 +81,44 @@ async function run() {
       }
     });
 
-    
-    // --- received user from client
-    app.post('/users', async (req, res) => {
+
+    // --- received user from client for userRegister
+    app.post('/userRegister', async (req, res) => {
       const user = req.body;
-      console.log(user);
-      const result = await userCollection.insertOne(user);
+      const { name, photo_url, email, mobileNumber, pin } = user;
+
+      // Validate email and mobileNumber to prevent duplicates
+      const existingUserWithEmail = await userCollection.findOne({ email: email });
+      if (existingUserWithEmail) {
+        return res.status(400).send({ error: 'Email already exists' });
+      }
+
+      const existingUserWithMobile = await userCollection.findOne({ mobileNumber: mobileNumber });
+      if (existingUserWithMobile) {
+        return res.status(400).send({ error: 'Mobile number already exists' });
+      }
+
+      const hashedPin = await bcrypt.hash(pin, 10);
+      const newUser = { name, photo_url, email, mobileNumber, pin: hashedPin, balance: 0, status: 'pending', role: 'user' };
+
+      const result = await userCollection.insertOne(newUser);
       res.send(result);
+    });
+
+
+    // --- received user from client for userLogin
+    app.post('/userLogin', async (req, res) => {
+      const { emailOrMobile, pin } = req.body;
+
+      const user = await userCollection.findOne({
+        $or: [{ mobileNumber: emailOrMobile }, { email: emailOrMobile }]
+      });
+      if (!user || !(await bcrypt.compare(pin, user.pin))) {
+        return res.status(400).send('Invalid credentials');
+      }
+
+      const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+      res.json({ token });
     });
 
     // Send a ping to confirm a successful connection
@@ -100,11 +132,11 @@ run().catch(console.dir);
 
 
 // -------------- server run checking --------------------
-app.get('/',  (req, res) => {
+app.get('/', (req, res) => {
   res.send('Server is running...')
 });
 
-app.listen(port, ()=>{
+app.listen(port, () => {
   console.log(`Server is running port: ${port}
   Link: http://localhost:${port}`);
 });
