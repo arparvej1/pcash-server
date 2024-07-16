@@ -111,6 +111,7 @@ async function run() {
 
     // Activate or block user
     app.put('/users/:userId/:action', verifyToken, async (req, res) => {
+      const { userId, action } = req.params;
       const userEmail = req.decoded.email;
       // console.log(userEmail);
       const userAdmin = await userCollection.findOne({
@@ -120,8 +121,48 @@ async function run() {
       if (userAdmin.role !== 'admin') {
         return res.status(401).send({ message: 'unauthorized access' });
       }
+      // -------------- give the bonus ------------
+      const userReceiver = await userCollection.findOne({
+        $or: [{ _id: new ObjectId(userId) }]
+      });
+      if (userReceiver.status === 'pending') {
+        // --- balance update -----------
+        await userCollection.updateOne(
+          { _id: userReceiver._id },
+          { $set: { balance: userReceiver.balance + userReceiver.role === 'agent' ? 10000 : 40 } }
+        );
 
-      const { userId, action } = req.params;
+        // Function to generate a random alphanumeric string of specified length
+        const generateTransactionId = (length) => {
+          const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+          let result = '';
+          for (let i = 0; i < length; i++) {
+            result += characters.charAt(Math.floor(Math.random() * characters.length));
+          }
+          return result;
+        };
+        let newTransactionId;
+        let checkNewTransactionId;
+
+        // Loop until a unique transactionId is generated
+        do {
+          newTransactionId = generateTransactionId(10);
+          checkNewTransactionId = await transactionsCollection.findOne({ transactionId: newTransactionId });
+        } while (checkNewTransactionId);
+
+        const newTransaction = {
+          // senderMobile: userSender.mobileNumber,
+          receiverMobile: userReceiver.mobileNumber,
+          transactionTime: getCurrentDateTime(),
+          transactionId: newTransactionId,
+          transactionType: 'Bonus',
+          amount: userReceiver.role === 'agent' ? 10000 : 40,
+          senderSendMoneyFee: 0
+        };
+
+        await transactionsCollection.insertOne(newTransaction);
+      }
+      // --------------- give the bonus end ---------
       const validActions = ['activate', 'block'];
       if (!validActions.includes(action)) {
         return res.status(400).json({ error: 'Invalid action' });
@@ -145,7 +186,7 @@ async function run() {
     // --- received user from client for userRegister
     app.post('/userRegister', async (req, res) => {
       const user = req.body;
-      const { name, photo_url, email, mobileNumber, pin } = user;
+      const { name, photo_url, email, mobileNumber, pin, userType } = user;
 
       // Validate email and mobileNumber to prevent duplicates
       const existingUserWithEmail = await userCollection.findOne({ email: email });
@@ -166,9 +207,9 @@ async function run() {
         email,
         mobileNumber,
         pin: hashedPin,
-        balance: 40,
-        status: 'active',
-        role: 'user',
+        balance: 0,
+        status: 'pending',
+        role: userType,
         creationTime: getCurrentDateTime(),
         lastLogInTime: getCurrentDateTime()
       };
