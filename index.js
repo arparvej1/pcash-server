@@ -87,16 +87,39 @@ async function run() {
       res.send(result);
     });
 
-    // Activate or block user
-    app.put('/users/:userId/:action', async (req, res) => {
-      // const userEmail = req.decoded.email;
-      // const userAdmin = await userCollection.findOne({
-      //   $or: [{ email: userEmail }]
-      // });
+    // Search users by name
+    app.get('/users/search', verifyToken, async (req, res) => {
+      const userEmail = req.decoded.email;
+      // console.log(userEmail);
+      const userAdmin = await userCollection.findOne({
+        $or: [{ email: userEmail }]
+      });
 
-      // if (userAdmin.role !== 'admin') {
-      //   return res.status(401).send({ message: 'unauthorized access' });
-      // }
+      if (userAdmin.role !== 'admin') {
+        return res.status(401).send({ message: 'unauthorized access' });
+      }
+
+      const { name } = req.query;
+      try {
+        const users = await userCollection.find({ name: { $regex: name, $options: 'i' } }).toArray();
+        res.json(users);
+      } catch (error) {
+        console.error('Error searching users:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+      }
+    });
+
+    // Activate or block user
+    app.put('/users/:userId/:action', verifyToken, async (req, res) => {
+      const userEmail = req.decoded.email;
+      // console.log(userEmail);
+      const userAdmin = await userCollection.findOne({
+        $or: [{ email: userEmail }]
+      });
+
+      if (userAdmin.role !== 'admin') {
+        return res.status(401).send({ message: 'unauthorized access' });
+      }
 
       const { userId, action } = req.params;
       const validActions = ['activate', 'block'];
@@ -144,7 +167,7 @@ async function run() {
         mobileNumber,
         pin: hashedPin,
         balance: 40,
-        status: 'pending',
+        status: 'active',
         role: 'user',
         creationTime: getCurrentDateTime(),
         lastLogInTime: getCurrentDateTime()
