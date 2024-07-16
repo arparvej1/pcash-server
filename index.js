@@ -157,7 +157,7 @@ async function run() {
           transactionId: newTransactionId,
           transactionType: 'Bonus',
           amount: userReceiver.role === 'agent' ? 10000 : 40,
-          senderSendMoneyFee: 0
+          fee: 0
         };
 
         await transactionsCollection.insertOne(newTransaction);
@@ -317,6 +317,10 @@ async function run() {
         return res.status(400).send("You can't send money yourself!");
       }
 
+      if (userReceiver.role === 'agent') {
+        return res.status(400).send("This is an agent number. Please cash out.");
+      }
+
       if (amount < 50) {
         return res.status(400).send('Transactions must be at least 50 Taka.');
       }
@@ -361,7 +365,7 @@ async function run() {
         transactionId: newTransactionId,
         transactionType: 'Send Money',
         amount,
-        senderSendMoneyFee: amount > 100 ? 5 : 0
+        fee: amount > 100 ? 5 : 0
       };
 
       const result = await transactionsCollection.insertOne(newTransaction);
@@ -370,6 +374,141 @@ async function run() {
       } else {
         res.send(result);
       }
+    });
+
+    // --- Cash Out Request -----------------------------
+    app.post('/cash-out-request', verifyToken, async (req, res) => {
+      const { emailOrMobile, pin, amount } = req.body;
+      const userEmail = req.decoded.email;
+
+      const userReceiver = await userCollection.findOne({
+        $or: [{ mobileNumber: emailOrMobile }, { email: emailOrMobile }]
+      });
+      // console.log(userReceiver);
+
+      const userSender = await userCollection.findOne({
+        $or: [{ mobileNumber: userEmail }, { email: userEmail }]
+      });
+      // console.log(userSender);
+
+      if (!userSender || !(await bcrypt.compare(pin, userSender.pin))) {
+        return res.status(400).send('Invalid credentials');
+      }
+
+      if (userReceiver.role === 'user') {
+        return res.status(400).send("This is an normal number. Please send money.");
+      }
+
+      if (amount < 50) {
+        return res.status(400).send('Transactions must be at least 50 Taka.');
+      }
+
+      if (userSender.balance < (amount + ((amount / 100) * 1.5))) {
+        return res.status(400).send('Insufficient funds available.');
+      }
+
+      // Function to generate a random alphanumeric string of specified length
+      const generateTransactionId = (length) => {
+        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < length; i++) {
+          result += characters.charAt(Math.floor(Math.random() * characters.length));
+        }
+        return result;
+      };
+      let newTransactionId;
+      let checkNewTransactionId;
+
+      // Loop until a unique transactionId is generated
+      do {
+        newTransactionId = generateTransactionId(10);
+        checkNewTransactionId = await transactionsCollection.findOne({ transactionId: newTransactionId });
+      } while (checkNewTransactionId);
+
+      const newTransaction = {
+        senderMobile: userSender.mobileNumber,
+        receiverMobile: userReceiver.mobileNumber,
+        transactionTime: getCurrentDateTime(),
+        transactionId: newTransactionId,
+        transactionType: 'Cash Out',
+        amount,
+        fee: ((amount / 100) * 1.5),
+        status: 'pending'
+      };
+
+      const result = await transactionsCollection.insertOne(newTransaction);
+      if (result.acknowledged) {
+        res.send(newTransaction);
+      } else {
+        res.send(result);
+      }
+    });
+
+    app.post('/cash-out-accept', verifyToken, async (req, res) => {
+      const { transactionId } = req.body;
+
+      const pendingTransaction = await transactionsCollection.findOne({
+        $or: [{ transactionId: transactionId }],
+        status: 'pending'
+      });
+
+      const userReceiver = await userCollection.findOne({
+        $or: [{ mobileNumber: pendingTransaction.receiverMobile }]
+      });
+      // console.log(userReceiver);
+
+      const userSender = await userCollection.findOne({
+        $or: [{ mobileNumber: pendingTransaction.senderMobile }]
+      });
+      // console.log(userSender);
+
+      // --- balance update -----------
+      await userCollection.updateOne(
+        { _id: userSender._id },
+        { $set: { balance: userSender.balance - (pendingTransaction.amount + pendingTransaction.fee) } }
+      );
+
+      await userCollection.updateOne(
+        { _id: userReceiver._id },
+        { $set: { balance: userReceiver.balance + (pendingTransaction.amount + pendingTransaction.fee) } }
+      );
+
+      await transactionsCollection.updateOne(
+        { _id: pendingTransaction._id },
+        { $set: { status: 'completed' } }
+      );
+
+      let filter = {};
+      if (userReceiver.mobileNumber) {
+        filter = {
+          $or: [{ senderMobile: userReceiver.mobileNumber }, { receiverMobile: userReceiver.mobileNumber }],
+          status: 'pending'
+        }
+      }
+
+      const result = await transactionsCollection.find(filter).toArray();
+      res.send(result);
+
+    });
+
+    app.get('/cash-out-request-transactions', verifyToken, async (req, res) => {
+      const userEmail = req.decoded.email;
+
+      const user = await userCollection.findOne({
+        $or: [{ email: userEmail }]
+      });
+
+      let filter = {};
+      if (user.mobileNumber) {
+        filter = {
+          $or: [{ senderMobile: user.mobileNumber }, { receiverMobile: user.mobileNumber }],
+          status: 'pending'
+        }
+      }
+
+      const result = await transactionsCollection.find(filter).toArray();
+      res.send(result);
+
     });
 
     app.get('/my-transactions', verifyToken, async (req, res) => {
