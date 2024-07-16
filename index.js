@@ -48,18 +48,12 @@ async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
 
-    //--------- creating Token
-    app.post('/jwt', async (req, res) => {
-      const user = req.body;
-      const token = jwt.sign(user, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
-      res.send({ token });
-    });
-
     app.post('/logout', async (req, res) => {
       const user = req.body;
       console.log('logging out', user);
       res.clearCookie('token', { maxAge: 0 }).send({ success: true })
     });
+
     const mainDB = client.db('pCash'); // << ----- main Database here -----
     const userCollection = mainDB.collection('users');
 
@@ -120,6 +114,41 @@ async function run() {
       const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
       res.json({ token });
     });
+
+
+    // --- received user from client for userCheck
+    app.post('/userCheck', async (req, res) => {
+      const { token } = req.body;
+      console.log('Received token:', token);
+    
+      try {
+        jwt.verify(token, process.env.JWT_ACCESS_TOKEN_SECRET, async (err, decoded) => {
+          if (err) {
+            console.error('JWT verify error:', err);
+            return res.status(401).send({ message: 'Unauthorized access' });
+          }
+    
+          const userId = decoded;
+          console.log('Decoded user ID:', userId);
+    
+          const user = await userCollection.findOne({
+            $or: [{ mobileNumber: userId.mobileNumber }, { email: userId.email }]
+          });
+    
+          if (!user) {
+            return res.status(400).send('User not found');
+          }
+    
+          res.send(user);
+        });
+      } catch (error) {
+        console.error('Error in /userCheck:', error);
+        res.status(500).send('Internal server error');
+      }
+    });
+    
+
+
 
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
