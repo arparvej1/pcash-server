@@ -116,7 +116,7 @@ async function run() {
         email,
         mobileNumber,
         pin: hashedPin,
-        balance: 0,
+        balance: 40,
         status: 'pending',
         role: 'user',
         creationTime: getCurrentDateTime(),
@@ -198,7 +198,7 @@ async function run() {
 
     // --- send money -----------------------------
     app.post('/send-money', verifyToken, async (req, res) => {
-      const { emailOrMobile, pin } = req.body;
+      const { emailOrMobile, pin, amount } = req.body;
       const userEmail = req.decoded.email;
 
       const userReceiver = await userCollection.findOne({
@@ -214,6 +214,25 @@ async function run() {
       if (!userSender || !(await bcrypt.compare(pin, userSender.pin))) {
         return res.status(400).send('Invalid credentials');
       }
+
+      if (userSender.mobileNumber === userReceiver.mobileNumber) {
+        return res.status(400).send("You can't send money yourself!");
+      }
+
+      if (userSender.balance < 50 + (amount + (amount > 100 ? 5 : 0))) {
+        return res.status(400).send('Enough Amount Not Available');
+      }
+
+      // --- balance update -----------
+      await userCollection.updateOne(
+        { _id: userSender._id },
+        { $set: { balance: userSender.balance - (amount + (amount > 100 ? 5 : 0)) } }
+      );
+
+      await userCollection.updateOne(
+        { _id: userReceiver._id },
+        { $set: { balance: userReceiver.balance + amount } }
+      );
 
       // Function to generate a random alphanumeric string of specified length
       const generateTransactionId = (length) => {
@@ -238,7 +257,9 @@ async function run() {
         receiverMobile: userReceiver.mobileNumber,
         transactionTime: getCurrentDateTime(),
         transactionId: newTransactionId,
-        transactionType: 'Send Money'
+        transactionType: 'Send Money',
+        amount,
+        senderSendMoneyFee: amount > 100 ? 5 : 0
       };
 
       const result = await transactionsCollection.insertOne(newTransaction);
