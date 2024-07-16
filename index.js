@@ -44,13 +44,14 @@ const verifyToken = (req, res, next) => {
   })
 };
 
+// Get current date and time ------------------- 
 const getCurrentDateTime = () => {
   const months = [
     'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
     'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'
   ];
 
-  // Get current date and time in Bangladeshi local time
+  // Get current date and time in local time
   const currentDateTime = new Date();
 
   // Format date and time
@@ -68,14 +69,9 @@ async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
 
-    app.post('/logout', async (req, res) => {
-      const user = req.body;
-      console.log('logging out', user);
-      res.clearCookie('token', { maxAge: 0 }).send({ success: true })
-    });
-
     const mainDB = client.db('pCash'); // << ----- main Database here -----
     const userCollection = mainDB.collection('users');
+    const transactionsCollection = mainDB.collection('transactions');
 
     app.get('/users/:email', verifyToken, async (req, res) => {
       console.log(req.params?.email);
@@ -164,7 +160,7 @@ async function run() {
     // --- received user from client for userCheck
     app.post('/userCheck', async (req, res) => {
       const { token } = req.body;
-      console.log('Received token:', token);
+      // console.log('Received token:', token);
 
       try {
         jwt.verify(token, process.env.JWT_ACCESS_TOKEN_SECRET, async (err, decoded) => {
@@ -174,7 +170,7 @@ async function run() {
           }
 
           const userId = decoded;
-          console.log('Decoded user ID:', userId);
+          // console.log('Decoded user ID:', userId);
 
           const user = await userCollection.findOne({
             $or: [{ mobileNumber: userId.mobileNumber }, { email: userId.email }]
@@ -200,6 +196,58 @@ async function run() {
       }
     });
 
+    // --- send money -----------------------------
+    app.post('/send-money', verifyToken, async (req, res) => {
+      const { emailOrMobile, pin } = req.body;
+      const userEmail = req.decoded.email;
+
+      const userReceiver = await userCollection.findOne({
+        $or: [{ mobileNumber: emailOrMobile }, { email: emailOrMobile }]
+      });
+      // console.log(userReceiver);
+
+      const userSender = await userCollection.findOne({
+        $or: [{ mobileNumber: userEmail }, { email: userEmail }]
+      });
+      // console.log(userSender);
+
+      if (!userSender || !(await bcrypt.compare(pin, userSender.pin))) {
+        return res.status(400).send('Invalid credentials');
+      }
+
+      // Function to generate a random alphanumeric string of specified length
+      const generateTransactionId = (length) => {
+        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < length; i++) {
+          result += characters.charAt(Math.floor(Math.random() * characters.length));
+        }
+        return result;
+      };
+      let newTransactionId;
+      let checkNewTransactionId;
+
+      // Loop until a unique transactionId is generated
+      do {
+        newTransactionId = generateTransactionId(10);
+        checkNewTransactionId = await transactionsCollection.findOne({ transactionId: newTransactionId });
+      } while (checkNewTransactionId);
+
+      const newTransaction = {
+        senderMobile: userSender.mobileNumber,
+        receiverMobile: userReceiver.mobileNumber,
+        transactionTime: getCurrentDateTime(),
+        transactionId: newTransactionId,
+        transactionType: 'Send Money'
+      };
+
+      const result = await transactionsCollection.insertOne(newTransaction);
+      if (result.acknowledged) {
+        res.send(newTransaction);
+      } else {
+        res.send(result);
+      }
+    });
 
 
 
