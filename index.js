@@ -44,6 +44,25 @@ const verifyToken = (req, res, next) => {
   })
 };
 
+const getCurrentDateTime = () => {
+  const months = [
+    'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'
+  ];
+
+  // Get current date and time in Bangladeshi local time
+  const currentDateTime = new Date();
+
+  // Format date and time
+  const day = currentDateTime.getDate().toString().padStart(2, '0');
+  const month = months[currentDateTime.getMonth()];
+  const year = currentDateTime.getFullYear();
+  const time = currentDateTime.toLocaleTimeString('en-US', { hour12: true });
+
+  return `${day}-${month}-${year}, ${time}`;
+};
+
+
 
 async function run() {
   try {
@@ -94,7 +113,19 @@ async function run() {
       }
 
       const hashedPin = await bcrypt.hash(pin, 10);
-      const newUser = { name, photo_url, email, mobileNumber, pin: hashedPin, balance: 0, status: 'pending', role: 'user' };
+
+      const newUser = {
+        name,
+        photo_url,
+        email,
+        mobileNumber,
+        pin: hashedPin,
+        balance: 0,
+        status: 'pending',
+        role: 'user',
+        creationTime: getCurrentDateTime(),
+        lastLogInTime: getCurrentDateTime()
+      };
 
       const result = await userCollection.insertOne(newUser);
       res.send(result);
@@ -112,13 +143,18 @@ async function run() {
         return res.status(400).send('Invalid credentials');
       }
 
-      // Create a dynamic payload for the JWT token
-      const payload = Object.keys(user).reduce((acc, key) => {
-        if (!['pin', 'status', 'balance'].includes(key)) {
-          acc[key] = user[key];
-        }
-        return acc;
-      }, {});
+      await userCollection.updateOne(
+        { _id: user._id },
+        { $set: { lastLogInTime: getCurrentDateTime() } }
+      );
+
+      // Create a dynamic payload for the JWT token (excluding sensitive information)
+      const payload = {
+        name: user.name,
+        email: user.email,
+        mobileNumber: user.mobileNumber,
+        role: user.role,
+      };
 
       const token = jwt.sign(payload, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
       res.json({ token });
@@ -150,7 +186,7 @@ async function run() {
 
           // Create a dynamic payload for the User
           const payload = Object.keys(user).reduce((acc, key) => {
-            if (!['pin', 'status'].includes(key)) {
+            if (!['pin'].includes(key)) {
               acc[key] = user[key];
             }
             return acc;
