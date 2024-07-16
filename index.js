@@ -111,7 +111,15 @@ async function run() {
         return res.status(400).send('Invalid credentials');
       }
 
-      const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+      // Create a dynamic payload for the JWT token
+      const payload = Object.keys(user).reduce((acc, key) => {
+        if (!['pin', 'status', 'balance'].includes(key)) {
+          acc[key] = user[key];
+        }
+        return acc;
+      }, {});
+
+      const token = jwt.sign(payload, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
       res.json({ token });
     });
 
@@ -120,33 +128,41 @@ async function run() {
     app.post('/userCheck', async (req, res) => {
       const { token } = req.body;
       console.log('Received token:', token);
-    
+
       try {
         jwt.verify(token, process.env.JWT_ACCESS_TOKEN_SECRET, async (err, decoded) => {
           if (err) {
             console.error('JWT verify error:', err);
             return res.status(401).send({ message: 'Unauthorized access' });
           }
-    
+
           const userId = decoded;
           console.log('Decoded user ID:', userId);
-    
+
           const user = await userCollection.findOne({
             $or: [{ mobileNumber: userId.mobileNumber }, { email: userId.email }]
           });
-    
+
           if (!user) {
             return res.status(400).send('User not found');
           }
-    
-          res.send(user);
+
+          // Create a dynamic payload for the User
+          const payload = Object.keys(user).reduce((acc, key) => {
+            if (!['pin', 'status'].includes(key)) {
+              acc[key] = user[key];
+            }
+            return acc;
+          }, {});
+
+          res.send(payload);
         });
       } catch (error) {
         console.error('Error in /userCheck:', error);
         res.status(500).send('Internal server error');
       }
     });
-    
+
 
 
 
