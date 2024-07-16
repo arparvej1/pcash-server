@@ -73,24 +73,51 @@ async function run() {
     const userCollection = mainDB.collection('users');
     const transactionsCollection = mainDB.collection('transactions');
 
-    app.get('/users/:email', verifyToken, async (req, res) => {
-      console.log(req.params?.email);
-      const userEmail = req.params?.email;
-      if (req.user.email !== userEmail) {
-        return res.status(403).send({ message: 'forbidden access' })
+    app.get('/users', verifyToken, async (req, res) => {
+      const userEmail = req.decoded.email;
+      const userAdmin = await userCollection.findOne({
+        $or: [{ email: userEmail }]
+      });
+
+      if (userAdmin.role !== 'admin') {
+        return res.status(401).send({ message: 'unauthorized access' });
       }
-      let filter = {};
-      if (req.params?.email) {
-        filter = { email: userEmail }
-      }
-      const result = await userCollection.find(filter).toArray();
-      if (result && result.length > 0) {
-        res.send({ verifyUser: true });
-      } else {
-        res.send({ verifyUser: false });
-      }
+
+      const result = await userCollection.find().toArray();
+      res.send(result);
     });
 
+    // Activate or block user
+    app.put('/users/:userId/:action', async (req, res) => {
+      // const userEmail = req.decoded.email;
+      // const userAdmin = await userCollection.findOne({
+      //   $or: [{ email: userEmail }]
+      // });
+
+      // if (userAdmin.role !== 'admin') {
+      //   return res.status(401).send({ message: 'unauthorized access' });
+      // }
+
+      const { userId, action } = req.params;
+      const validActions = ['activate', 'block'];
+      if (!validActions.includes(action)) {
+        return res.status(400).json({ error: 'Invalid action' });
+      }
+      try {
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(userId) },
+          { $set: { status: action === 'activate' ? 'active' : 'blocked' } }
+        );
+        if (result.modifiedCount === 0) {
+          return res.status(404).json({ error: 'User not found' });
+        }
+        const updatedUser = await userCollection.findOne({ _id: new ObjectId(userId) });
+        res.json(updatedUser);
+      } catch (error) {
+        console.error(`Error ${action}ing user:`, error);
+        res.status(500).json({ error: 'Internal Server Error' });
+      }
+    });
 
     // --- received user from client for userRegister
     app.post('/userRegister', async (req, res) => {
@@ -138,6 +165,9 @@ async function run() {
       if (!user || !(await bcrypt.compare(pin, user.pin))) {
         return res.status(400).send('Invalid credentials');
       }
+      if (user.status === 'blocked') {
+        return res.status(400).send('user blocked');
+      }
 
       await userCollection.updateOne(
         { _id: user._id },
@@ -180,6 +210,10 @@ async function run() {
             return res.status(400).send('User not found');
           }
 
+          if (user.status === 'blocked') {
+            return res.status(400).send('user blocked');
+          }
+
           // Create a dynamic payload for the User
           const payload = Object.keys(user).reduce((acc, key) => {
             if (!['pin'].includes(key)) {
@@ -219,8 +253,12 @@ async function run() {
         return res.status(400).send("You can't send money yourself!");
       }
 
-      if (userSender.balance < 50 + (amount + (amount > 100 ? 5 : 0))) {
-        return res.status(400).send('Enough Amount Not Available');
+      if (amount < 50) {
+        return res.status(400).send('Transactions must be at least 50 Taka.');
+      }
+
+      if (userSender.balance < (amount + (amount > 100 ? 5 : 0))) {
+        return res.status(400).send('Insufficient funds available.');
       }
 
       // --- balance update -----------
@@ -270,6 +308,37 @@ async function run() {
       }
     });
 
+    app.get('/my-transactions', verifyToken, async (req, res) => {
+      const userEmail = req.decoded.email;
+
+      const user = await userCollection.findOne({
+        $or: [{ email: userEmail }]
+      });
+
+      let filter = {};
+      if (user.mobileNumber) {
+        filter = { $or: [{ senderMobile: user.mobileNumber }, { receiverMobile: user.mobileNumber }] }
+      }
+
+      const result = await transactionsCollection.find(filter).toArray();
+      res.send(result);
+
+    });
+
+    app.get('/all-transactions', verifyToken, async (req, res) => {
+      const userEmail = req.decoded.email;
+      const user = await userCollection.findOne({
+        $or: [{ email: userEmail }]
+      });
+
+      if (user.role !== 'admin') {
+        return res.status(401).send({ message: 'unauthorized access' });
+      }
+
+      const result = await transactionsCollection.find().toArray();
+      res.send(result);
+
+    });
 
 
     // Send a ping to confirm a successful connection
