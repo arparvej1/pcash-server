@@ -10,7 +10,8 @@ const port = process.env.PORT || 5000;
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'https://pcash-client.vercel.app'
+    'https://pcash-client.vercel.app',
+    'https://pcash.netlify.app'
   ],
   credentials: true
 }));
