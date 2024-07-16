@@ -129,7 +129,7 @@ async function run() {
         // --- balance update -----------
         await userCollection.updateOne(
           { _id: userReceiver._id },
-          { $set: { balance: userReceiver.balance + userReceiver.role === 'agent' ? 10000 : 40 } }
+          { $set: { balance: userReceiver.balance + (userReceiver.role === 'agent' ? 10000 : 40) } }
         );
 
         // Function to generate a random alphanumeric string of specified length
