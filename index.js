@@ -101,7 +101,18 @@ async function run() {
 
       const { name } = req.query;
       try {
-        const users = await userCollection.find({ name: { $regex: name, $options: 'i' } }).toArray();
+        const users = await userCollection.find({
+          $or: [
+            { name: { $regex: name, $options: 'i' } },
+            { email: { $regex: name, $options: 'i' } },
+            { mobileNumber: { $regex: name, $options: 'i' } }
+          ]
+        }).toArray();
+
+        // const userReceiver = await userCollection.findOne({
+        //   $or: [{ mobileNumber: emailOrMobile }, { email: emailOrMobile }]
+        // });
+
         res.json(users);
       } catch (error) {
         console.error('Error searching users:', error);
