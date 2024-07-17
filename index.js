@@ -365,7 +365,8 @@ async function run() {
         transactionId: newTransactionId,
         transactionType: 'Send Money',
         amount,
-        fee: amount > 100 ? 5 : 0
+        fee: amount > 100 ? 5 : 0,
+        status: 'completed'
       };
 
       const result = await transactionsCollection.insertOne(newTransaction);
