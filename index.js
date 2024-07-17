@@ -332,12 +332,12 @@ async function run() {
       // --- balance update -----------
       await userCollection.updateOne(
         { _id: userSender._id },
-        { $set: { balance: userSender.balance - (amount + (amount > 100 ? 5 : 0)) } }
+        { $set: { balance: parseFloat(userSender.balance) - parseFloat(amount + (amount > 100 ? 5 : 0)) } }
       );
 
       await userCollection.updateOne(
         { _id: userReceiver._id },
-        { $set: { balance: userReceiver.balance + amount } }
+        { $set: { balance: parseFloat(userReceiver.balance) + parseFloat(amount) } }
       );
 
       // Function to generate a random alphanumeric string of specified length
@@ -397,10 +397,8 @@ async function run() {
 
       if (userReceiver.role === 'user') {
         return res.status(400).send("This is an normal number. Please send money.");
-      }
-
-      if (amount < 50) {
-        return res.status(400).send('Transactions must be at least 50 Taka.');
+      } else if (userReceiver.role === 'admin') {
+        return res.status(400).send("<This is admin number. Please enter normal number.>");
       }
 
       if (userSender.balance < (amount + ((amount / 100) * 1.5))) {
@@ -432,7 +430,7 @@ async function run() {
         transactionId: newTransactionId,
         transactionType: 'Cash Out',
         amount,
-        fee: ((amount / 100) * 1.5),
+        fee: parseFloat((amount / 100) * 1.5),
         status: 'pending'
       };
 
@@ -461,16 +459,21 @@ async function run() {
         $or: [{ mobileNumber: pendingTransaction.senderMobile }]
       });
       // console.log(userSender);
+      const updateAmount = parseFloat(pendingTransaction.amount) + parseFloat(pendingTransaction.fee);
+
+      if (userSender.balance < updateAmount) {
+        return res.status(400).send('Insufficient funds available.');
+      }
 
       // --- balance update -----------
       await userCollection.updateOne(
         { _id: userSender._id },
-        { $set: { balance: userSender.balance - (pendingTransaction.amount + pendingTransaction.fee) } }
+        { $set: { balance: parseFloat(userSender.balance) - parseFloat(updateAmount) } }
       );
 
       await userCollection.updateOne(
         { _id: userReceiver._id },
-        { $set: { balance: userReceiver.balance + (pendingTransaction.amount + pendingTransaction.fee) } }
+        { $set: { balance: parseFloat(userReceiver.balance) + parseFloat(updateAmount) } }
       );
 
       await transactionsCollection.updateOne(
@@ -482,7 +485,8 @@ async function run() {
       if (userReceiver.mobileNumber) {
         filter = {
           $or: [{ senderMobile: userReceiver.mobileNumber }, { receiverMobile: userReceiver.mobileNumber }],
-          status: 'pending'
+          status: 'pending',
+          transactionType: 'Cash Out'
         }
       }
 
@@ -502,7 +506,8 @@ async function run() {
       if (user.mobileNumber) {
         filter = {
           $or: [{ senderMobile: user.mobileNumber }, { receiverMobile: user.mobileNumber }],
-          status: 'pending'
+          status: 'pending',
+          transactionType: 'Cash Out'
         }
       }
 
@@ -511,6 +516,145 @@ async function run() {
 
     });
 
+    // --- Cash In Request -----------------------------
+    app.post('/cash-in-request', verifyToken, async (req, res) => {
+      const { emailOrMobile, pin, amount } = req.body;
+      const userEmail = req.decoded.email;
+
+      // ---- this is request receiver not taka receiver ----
+      const userReceiver = await userCollection.findOne({
+        $or: [{ mobileNumber: emailOrMobile }, { email: emailOrMobile }]
+      });
+      // console.log(userReceiver);
+
+      // ---- this is request sender not taka sender ----
+      const userSender = await userCollection.findOne({
+        $or: [{ mobileNumber: userEmail }, { email: userEmail }]
+      });
+      // console.log(userSender);
+
+      if (!userSender || !(await bcrypt.compare(pin, userSender.pin))) {
+        return res.status(400).send('Invalid credentials');
+      }
+
+      if (userReceiver.role === 'user') {
+        return res.status(400).send("This is an normal number. Please enter agent number.");
+      } else if (userReceiver.role === 'admin') {
+        return res.status(400).send("<This is admin number. Please enter agent number.>");
+      }
+
+      // Function to generate a random alphanumeric string of specified length
+      const generateTransactionId = (length) => {
+        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < length; i++) {
+          result += characters.charAt(Math.floor(Math.random() * characters.length));
+        }
+        return result;
+      };
+      let newTransactionId;
+      let checkNewTransactionId;
+
+      // Loop until a unique transactionId is generated
+      do {
+        newTransactionId = generateTransactionId(10);
+        checkNewTransactionId = await transactionsCollection.findOne({ transactionId: newTransactionId });
+      } while (checkNewTransactionId);
+
+      const newTransaction = {
+        senderMobile: userReceiver.mobileNumber,
+        receiverMobile: userSender.mobileNumber,
+        transactionTime: getCurrentDateTime(),
+        transactionId: newTransactionId,
+        transactionType: 'Cash In',
+        amount,
+        fee: 0,
+        status: 'pending'
+      };
+
+      const result = await transactionsCollection.insertOne(newTransaction);
+      if (result.acknowledged) {
+        res.send(newTransaction);
+      } else {
+        res.send(result);
+      }
+    });
+
+    app.post('/cash-in-accept', verifyToken, async (req, res) => {
+      const { transactionId } = req.body;
+
+      const pendingTransaction = await transactionsCollection.findOne({
+        $or: [{ transactionId: transactionId }],
+        status: 'pending'
+      });
+
+      const userReceiver = await userCollection.findOne({
+        $or: [{ mobileNumber: pendingTransaction.receiverMobile }]
+      });
+      // console.log(userReceiver);
+
+      const userSender = await userCollection.findOne({
+        $or: [{ mobileNumber: pendingTransaction.senderMobile }]
+      });
+      // console.log(userSender);
+
+      const updateAmount = parseFloat(pendingTransaction.amount) + parseFloat(pendingTransaction.fee);
+
+      if (userSender.balance < updateAmount) {
+        return res.status(400).send('Insufficient funds available.');
+      }
+
+      // --- balance update -----------
+      await userCollection.updateOne(
+        { _id: userSender._id },
+        { $set: { balance: parseFloat(userSender.balance) - parseFloat(updateAmount) } }
+      );
+
+      await userCollection.updateOne(
+        { _id: userReceiver._id },
+        { $set: { balance: parseFloat(userReceiver.balance) + parseFloat(updateAmount) } }
+      );
+
+      await transactionsCollection.updateOne(
+        { _id: pendingTransaction._id },
+        { $set: { status: 'completed' } }
+      );
+
+      let filter = {};
+      if (userReceiver.mobileNumber) {
+        filter = {
+          $or: [{ senderMobile: userReceiver.mobileNumber }, { receiverMobile: userReceiver.mobileNumber }],
+          status: 'pending',
+          transactionType: 'Cash In'
+        }
+      }
+
+      const result = await transactionsCollection.find(filter).toArray();
+      res.send(result);
+
+    });
+
+    app.get('/cash-in-request-transactions', verifyToken, async (req, res) => {
+      const userEmail = req.decoded.email;
+
+      const user = await userCollection.findOne({
+        $or: [{ email: userEmail }]
+      });
+
+      let filter = {};
+      if (user.mobileNumber) {
+        filter = {
+          $or: [{ senderMobile: user.mobileNumber }, { receiverMobile: user.mobileNumber }],
+          status: 'pending',
+          transactionType: 'Cash In'
+        }
+      }
+
+      const result = await transactionsCollection.find(filter).toArray();
+      res.send(result);
+    });
+
+    // ----------------- transactions history api -------
     app.get('/my-transactions', verifyToken, async (req, res) => {
       const userEmail = req.decoded.email;
 
