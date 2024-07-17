@@ -219,6 +219,25 @@ async function run() {
     });
 
 
+    // --- update profile -----------------------------
+    app.post('/profile-update', verifyToken, async (req, res) => {
+      const { name, photo_url } = req.body;
+      const userEmail = req.decoded.email;
+
+      const user = await userCollection.findOne({
+        $or: [{ email: userEmail }]
+      });
+      // console.log(user);
+
+      // --- update data -----------
+      const result = await userCollection.updateOne(
+        { _id: user._id },
+        { $set: { name: name, photo_url: photo_url } }
+      );
+
+      res.send(result);
+    });
+
     // --- received user from client for userLogin
     app.post('/userLogin', async (req, res) => {
       const { emailOrMobile, pin } = req.body;
