@@ -526,6 +526,36 @@ async function run() {
 
     });
 
+    app.post('/cash-out-reject', verifyToken, async (req, res) => {
+      const { transactionId } = req.body;
+
+      const pendingTransaction = await transactionsCollection.findOne({
+        $or: [{ transactionId: transactionId }],
+        status: 'pending'
+      });
+
+      const userReceiver = await userCollection.findOne({
+        $or: [{ mobileNumber: pendingTransaction.receiverMobile }]
+      });
+
+      await transactionsCollection.updateOne(
+        { _id: pendingTransaction._id },
+        { $set: { status: 'rejected' } }
+      );
+
+      let filter = {};
+      if (userReceiver.mobileNumber) {
+        filter = {
+          $or: [{ senderMobile: userReceiver.mobileNumber }, { receiverMobile: userReceiver.mobileNumber }],
+          status: 'pending',
+          transactionType: 'Cash Out'
+        }
+      }
+
+      const result = await transactionsCollection.find(filter).toArray();
+      res.send(result);
+    });
+
     app.get('/cash-out-request-transactions', verifyToken, async (req, res) => {
       const userEmail = req.decoded.email;
 
