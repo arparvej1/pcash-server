@@ -162,13 +162,14 @@ async function run() {
         } while (checkNewTransactionId);
 
         const newTransaction = {
-          // senderMobile: userSender.mobileNumber,
+          senderMobile: 'pCash',
           receiverMobile: userReceiver.mobileNumber,
           transactionTime: getCurrentDateTime(),
           transactionId: newTransactionId,
           transactionType: 'Bonus',
           amount: userReceiver.role === 'agent' ? 10000 : 40,
-          fee: 0
+          fee: 0,
+          status: 'completed'
         };
 
         await transactionsCollection.insertOne(newTransaction);
